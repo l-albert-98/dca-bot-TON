@@ -1,1 +1,1 @@
-python main.py
+python dca_ton.py
