@@ -1,1 +1,1 @@
-python dca_ton.py
+worker: python dca_ton.py
