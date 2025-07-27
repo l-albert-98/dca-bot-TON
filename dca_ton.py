@@ -63,9 +63,11 @@ def send_message(text, color="gray"):
 def report_external_ip():
     try:
         ip = requests.get("https://api.ipify.org").text
-        send_message(f"Внешний IP Railway: {ip}", color="gray")
+        send_message(f"🌐 Внешний IP Railway: {ip}", color="gray")
+        print(f"🌐 Внешний IP Railway: {ip}")
     except Exception as e:
-        print(f"Не удалось получить IP: {e}")
+        print(f"❌ Не удалось получить IP: {e}")
+        send_message(f"❌ Не получил IP: {e}", color="red")
 
 
 def check_api_access():
@@ -76,13 +78,14 @@ def check_api_access():
     except Exception as e:
         print(f"❌ Ошибка API: {e}")
         send_message(f"❌ Проблема с API: {e}", color="red")
+
     try:
-    ip = requests.get("https://api.ipify.org").text
-    print(f"🌐 Внешний IP-адрес Railway: {ip}")
-    send_message(f"🌐 Внешний IP Railway: {ip}", color="gray")
-except Exception as e:
-    print(f"❌ Не удалось получить внешний IP: {e}")
-    send_message(f"❌ Не получил IP: {e}", color="red")
+        ip = requests.get("https://api.ipify.org").text
+        print(f"🌐 Внешний IP-адрес Railway: {ip}")
+        send_message(f"🌐 Внешний IP Railway: {ip}", color="gray")
+    except Exception as e:
+        print(f"❌ Не удалось получить внешний IP: {e}")
+        send_message(f"❌ Не получил IP: {e}", color="red")
 
 
 def main():
@@ -112,7 +115,7 @@ def main():
                     if result:
                         buy_price = price
                         sell_price = price * 1.02
-                        send_message(f"Купил TON по {price:.5f}", color="red")
+                        send_message(f"🔻 Купил TON по {price:.5f}", color="red")
                 else:
                     print("Недостаточно USDT для покупки")
 
@@ -120,9 +123,9 @@ def main():
                 if ton_balance >= min_qty:
                     result = place_order("SELL", ton_balance)
                     if result:
-                        send_message(f"Продал TON по {price:.5f}", color="yellow")
+                        send_message(f"🟡 Продал TON по {price:.5f}", color="yellow")
                         profit = ton_balance * price - ton_balance * buy_price
-                        send_message(f"Прибыль: {profit:.2f} USDT", color="green")
+                        send_message(f"🟢 Прибыль: {profit:.2f} USDT", color="green")
                         buy_price = None
                         sell_price = None
                 else:
