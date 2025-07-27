@@ -76,6 +76,13 @@ def check_api_access():
     except Exception as e:
         print(f"❌ Ошибка API: {e}")
         send_message(f"❌ Проблема с API: {e}", color="red")
+    try:
+    ip = requests.get("https://api.ipify.org").text
+    print(f"🌐 Внешний IP-адрес Railway: {ip}")
+    send_message(f"🌐 Внешний IP Railway: {ip}", color="gray")
+except Exception as e:
+    print(f"❌ Не удалось получить внешний IP: {e}")
+    send_message(f"❌ Не получил IP: {e}", color="red")
 
 
 def main():
