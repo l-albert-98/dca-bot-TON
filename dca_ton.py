@@ -68,10 +68,21 @@ def report_external_ip():
         print(f"Не удалось получить IP: {e}")
 
 
+def check_api_access():
+    try:
+        account_info = client.get_account()
+        print("✅ Доступ к аккаунту есть")
+        send_message("✅ API-ключ работает", color="green")
+    except Exception as e:
+        print(f"❌ Ошибка API: {e}")
+        send_message(f"❌ Проблема с API: {e}", color="red")
+
+
 def main():
     global buy_price, sell_price
     print("Бот для TON запущен")
     report_external_ip()
+    check_api_access()
 
     while True:
         try:
