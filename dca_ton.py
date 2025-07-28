@@ -69,10 +69,19 @@ def place_order(order_type, quantity):
         log(f"❌ Ошибка {order_type}: {e}")
         return None
 
+def report_external_ip():
+    try:
+        ip = requests.get("https://api.ipify.org").text
+        log(f"🌐 Внешний IP Railway: {ip}")
+    except Exception as e:
+        log(f"❌ Не удалось получить внешний IP: {e}")
+
+# === ОСНОВНОЙ ЦИКЛ ===
 def main():
     global last_min_price, last_max_price, position, buy_price, profit_total
 
     log("🤖 Бот запущен: стратегия — отскок + реинвест")
+    report_external_ip()
 
     while True:
         try:
@@ -84,6 +93,7 @@ def main():
             usdt, ton = get_balances()
             log(f"📊 Цена: {price:.5f} | USDT: {usdt:.2f} | TON: {ton:.2f} | Профит: {profit_total:.2f}")
 
+            # === ПОКУПКА ===
             if not position:
                 if last_min_price is None or price < last_min_price:
                     last_min_price = price
@@ -101,6 +111,8 @@ def main():
                             log(f"🟥 Куплено по {price:.5f}")
                     else:
                         log(f"⚠️ Недостаточно USDT для покупки: {usdt:.2f}")
+
+            # === ПРОДАЖА ===
             else:
                 if last_max_price is None or price > last_max_price:
                     last_max_price = price
