@@ -64,11 +64,11 @@ def check_connectivity():
     try:
         response = requests.get("https://api.ipify.org", timeout=5)
         ip = response.text.strip()
+        send_message(f"🌍 Railway IP для Binance: {ip}\n\n⚠️ Если в Binance включено ограничение по IP, обязательно добавь этот IP в whitelist.")
         client.ping()
         client.get_account()
         print(f"✅ Подключение к Binance установлено. IP: {ip}")
         send_message("🤖 Бот запущен. Стратегия: трейлинг, DCA, объём ≥ 80% от среднего.")
-        send_message(f"🌍 Внешний IP Railway: {ip}")
     except Exception as e:
         print(f"❌ Ошибка подключения: {e}")
         send_message(f"❌ Ошибка подключения к Binance или IP: {e}")
