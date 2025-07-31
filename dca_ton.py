@@ -13,8 +13,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 client = Client(API_KEY, API_SECRET)
 symbol = "TONUSDT"
 
-min_qty = 0.1
-step_size = 0.1
+min_qty = 0.01
+step_size = 0.01
 tick_size = 0.0001
 min_notional = 1.0
 
@@ -25,6 +25,9 @@ last_min_price = None
 trailing_peak_price = None
 positions = []
 
+min_profit_percent = 0.5  # Минимальный профит в %
+commission_rate = 0.001  # 0.1% комиссия Binance
+
 def round_step(value, step):
     return round(value - (value % step), 8)
 
@@ -33,7 +36,7 @@ def get_price():
 
 def get_balances():
     usdt = float(client.get_asset_balance(asset="USDT")["free"])
-    ton = float(client.get_asset_balance(asset="TON")["free"])
+    ton = float(client.get_asset_balance(asset="TON")['free'])
     return usdt, ton
 
 def send_message(text):
@@ -85,6 +88,7 @@ def main():
         try:
             price = get_price()
             usdt, ton = get_balances()
+
             send_message(f"📈 Цена: {price:.5f} | USDT: {usdt:.2f} | TON: {ton:.2f} | Профит: {profit_total:.2f}")
 
             if not positions:
@@ -100,18 +104,21 @@ def main():
                     dca_index < len(dca_parts) and
                     current_volume >= avg_volume * 0.8
                 ):
-                    invest_amount = min(usdt, fixed_investment * dca_parts[dca_index])
-                    if invest_amount >= min_notional:
-                        qty = round_step(invest_amount / price, step_size)
-                        order = place_order("BUY", qty)
-                        if order:
-                            commission = invest_amount * 0.001
-                            positions.append({"qty": qty, "price": price, "cost": invest_amount, "commission": commission})
-                            send_message(f"🔻 Купил TON по {price:.5f}, на {invest_amount:.2f} USDT")
-                            trailing_peak_price = price
-                            dca_index += 1
-                    else:
-                        send_message("⚠️ Недостаточно USDT для покупки")
+                    time.sleep(5)
+                    new_price = get_price()
+                    if new_price > price:
+                        invest_amount = min(usdt, fixed_investment * dca_parts[dca_index])
+                        if invest_amount >= min_notional:
+                            qty = round_step(invest_amount / new_price, step_size)
+                            order = place_order("BUY", qty)
+                            if order:
+                                commission = invest_amount * commission_rate
+                                positions.append({"qty": qty, "price": new_price, "cost": invest_amount, "commission": commission})
+                                send_message(f"🔻 Купил TON по {new_price:.5f}, на {invest_amount:.2f} USDT")
+                                trailing_peak_price = new_price
+                                dca_index += 1
+                        else:
+                            send_message("⚠️ Недостаточно USDT для покупки")
             else:
                 if trailing_peak_price is None or price > trailing_peak_price:
                     trailing_peak_price = price
@@ -121,22 +128,23 @@ def main():
                 total_cost = sum(p["cost"] for p in positions)
                 total_commission = sum(p["commission"] for p in positions)
 
-                if price <= trailing_peak_price * 0.985 and price > avg_buy_price:
+                expected_profit_price = avg_buy_price * (1 + (min_profit_percent + commission_rate * 2) / 100)
+
+                if price <= trailing_peak_price * 0.985 and price >= expected_profit_price:
                     revenue = price * total_qty
                     net_profit = revenue - total_cost - total_commission
 
-                    if (price - avg_buy_price) / avg_buy_price >= 0.005:
-                        order = place_order("SELL", total_qty)
-                        if order:
-                            profit_total += net_profit
-                            send_message(f"🟡 Продал TON по {price:.5f}")
-                            send_message(f"🟢 Прибыль: {net_profit:.2f} USDT")
-                            positions = []
-                            last_min_price = None
-                            trailing_peak_price = None
-                            dca_index = 0
-                    else:
-                        send_message("🔸 Профит < 0.5% — продажа отменена")
+                    order = place_order("SELL", total_qty)
+                    if order:
+                        profit_total += net_profit
+                        send_message(f"🟡 Продал TON по {price:.5f}")
+                        send_message(f"🟢 Прибыль: {net_profit:.2f} USDT")
+                        positions = []
+                        last_min_price = None
+                        trailing_peak_price = None
+                        dca_index = 0
+                else:
+                    send_message("🔸 Профит < минимального уровня — продажа отменена")
 
         except Exception as e:
             send_message(f"❗ Ошибка в боте: {e}")
