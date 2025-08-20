@@ -1,6 +1,5 @@
 import os
 import time
-import json
 import math
 import requests
 from binance.client import Client
@@ -25,18 +24,15 @@ client = Client(API_KEY, API_SECRET)
 # ==========================
 # CONFIG (TON)
 # ==========================
-SYMBOL = "TONUSDT"  # <<< тут только пара отличается
+SYMBOL = "TONUSDT"
 
-# таймфреймы (HTF тренд, LTF вход/управление)
 TF_LTF = Client.KLINE_INTERVAL_15MINUTE
 TF_HTF = Client.KLINE_INTERVAL_4HOUR
 
-# фильтры тренда
 ADX_TREND = 18
 EMA_FAST  = 50
 EMA_SLOW  = 200
 
-# DCA / риск
 BASE_ORDER_USDT          = 20.0
 SAFETY_ORDERS            = 5
 VOL_MULT                 = 1.15
@@ -45,22 +41,20 @@ STEP_K_ATR_RANGE         = 0.30
 MAX_POS_RISK_PCT         = 1.0
 MAX_PORTFOLIO_RISK_PCT   = 4.0
 
-# TP / трейлинг / стоп
-MIN_TP_PCT               = 0.30
-TP_ATR_MULT_TREND        = 0.80
-TP_ATR_MULT_RANGE        = 0.50
-TRAIL_ATR_MULT           = 0.70
-STOP_ATR_MULT            = 1.80
-SLIP_TOLERANCE_PCT       = 0.10
+MIN_TP_PCT        = 0.30
+TP_ATR_MULT_TREND = 0.80
+TP_ATR_MULT_RANGE = 0.50
+TRAIL_ATR_MULT    = 0.70
+STOP_ATR_MULT     = 1.80
+SLIP_TOLERANCE_PCT= 0.10
 
-# прочее
-INTERVAL_SEC             = 30
-COMMISSION_RATE          = 0.001
-TELEGRAM_EVERY_LOOP      = False
+INTERVAL_SEC        = 30
+COMMISSION_RATE     = 0.001
+TELEGRAM_EVERY_LOOP = False
 
 # IP-оповещения (Railway)
-IP_CHECK_EVERY_SEC       = 600
-LAST_IP_FILE             = "public_ip.txt"
+IP_CHECK_EVERY_SEC = 600
+LAST_IP_FILE       = "public_ip.txt"
 
 # ==========================
 # UTILS / TELEGRAM
@@ -106,10 +100,15 @@ def check_binance_access() -> bool:
             tg(f"❌ Binance API error: {e}")
         return False
 
-def round_step(value: float, step: float) -> float:
+def round_down_step(value: float, step: float) -> float:
     if step <= 0:
         return float(value)
     return float((value // step) * step)
+
+def round_up_step(value: float, step: float) -> float:
+    if step <= 0:
+        return float(value)
+    return math.ceil(value / step) * step
 
 def symbol_filters():
     info = client.get_symbol_info(SYMBOL)
@@ -123,10 +122,8 @@ def symbol_filters():
     return float(lot['stepSize']), float(tick['tickSize']), float(min_notional)
 
 def get_balances():
-    quote = "USDT"
-    base  = SYMBOL.replace("USDT","")
-    q = float(client.get_asset_balance(asset=quote)["free"])
-    b = float(client.get_asset_balance(asset=base)["free"])
+    q = float(client.get_asset_balance(asset="USDT")["free"])
+    b = float(client.get_asset_balance(asset=SYMBOL.replace("USDT",""))["free"])
     return q, b
 
 def get_price() -> float:
@@ -152,78 +149,64 @@ def atr(ohlcv, period=14):
     if len(ohlcv) < period+1:
         return None
     trs = []
-    prev_close = ohlcv[0][3]
+    pc = ohlcv[0][3]
     for _,h,l,c,_ in ohlcv[1:]:
-        tr = max(h - l, abs(h - prev_close), abs(l - prev_close))
-        trs.append(tr)
-        prev_close = c
-    atr_val = sum(trs[:period]) / period
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        pc = c
+    a = sum(trs[:period]) / period
     for tr in trs[period:]:
-        atr_val = (atr_val*(period-1) + tr)/period
-    return atr_val
+        a = (a*(period-1) + tr)/period
+    return a
 
 def adx(ohlcv, period=14):
     if len(ohlcv) < period+2:
         return None
     plus_dm, minus_dm, trs = [], [], []
     for i in range(1, len(ohlcv)):
-        _, h, l, _, _ = ohlcv[i]
+        _, h, l, c, _ = ohlcv[i]
         _, ph, pl, pc, _ = ohlcv[i-1]
-        up   = h - ph
-        down = pl - l
-        plus_dm.append(up if (up>down and up>0) else 0.0)
-        minus_dm.append(down if (down>up and down>0) else 0.0)
-        tr = max(h - l, abs(h - pc), abs(l - pc))
-        trs.append(tr)
-
-    def wilder(vals):
-        s = sum(vals[:period])
-        out = [s]
+        up = h - ph; dn = pl - l
+        plus_dm.append(up if (up > dn and up > 0) else 0.0)
+        minus_dm.append(dn if (dn > up and dn > 0) else 0.0)
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    def w(vals):
+        s = sum(vals[:period]); out=[s]
         for v in vals[period:]:
-            s = s - (s/period) + v
-            out.append(s)
+            s = s - (s/period) + v; out.append(s)
         return out
-
-    trs_sm   = wilder(trs)
-    plus_sm  = wilder(plus_dm)
-    minus_sm = wilder(minus_dm)
-
-    di_plus  = [ (p/t)*100 if t>0 else 0 for p,t in zip(plus_sm, trs_sm) ]
-    di_minus = [ (m/t)*100 if t>0 else 0 for m,t in zip(minus_sm, trs_sm) ]
-    dx = [ (abs(p-m)/(p+m))*100 if (p+m)>0 else 0 for p,m in zip(di_plus, di_minus) ]
-
-    if len(dx) < period:
-        return None
-    adx_val = sum(dx[:period]) / period
+    trs_sm, plus_sm, minus_sm = w(trs), w(plus_dm), w(minus_dm)
+    di_p = [(p/t)*100 if t>0 else 0 for p,t in zip(plus_sm, trs_sm)]
+    di_m = [(m/t)*100 if t>0 else 0 for m,t in zip(minus_sm, trs_sm)]
+    dx = [(abs(p-m)/(p+m))*100 if (p+m)>0 else 0 for p,m in zip(di_p, di_m)]
+    if len(dx) < period: return None
+    a = sum(dx[:period]) / period
     for v in dx[period:]:
-        adx_val = (adx_val*(period-1) + v)/period
-    return adx_val
+        a = (a*(period-1) + v)/period
+    return a
 
 def bollinger(candles, period=20, mult=2.0):
     closes = [c[3] for c in candles]
-    if len(closes) < period:
-        return None, None, None
+    if len(closes) < period: return None, None, None
     sma = sum(closes[-period:]) / period
     var = sum((x - sma)**2 for x in closes[-period:]) / period
     std = math.sqrt(var)
     return sma, sma - mult*std, sma + mult*std
 
 # ==========================
-# ORDERS
+# ORDERS (c автодотяжкой до minNotional)
 # ==========================
 def place_market(side, qty):
     try:
         lot_step, _, min_notional = symbol_filters()
         price_now = get_price()
-        qty = max(qty, 0.0)
-        qty = round_step(qty, lot_step)
 
+        qty = max(qty, 0.0)
+        qty = round_down_step(qty, lot_step)
+
+        # дотягиваем количество вверх до minNotional
         if min_notional and qty * price_now < min_notional:
-            min_qty = round_step(min_notional / price_now, lot_step)
-            if min_qty * price_now < min_notional or min_qty <= 0:
-                tg(f"❌ Ордер меньше minNotional ({min_notional}). qty={qty}")
-                return None
-            qty = min_qty
+            min_qty = round_up_step(min_notional / price_now, lot_step)
+            qty = max(qty, min_qty)
 
         if qty <= 0:
             return None
@@ -298,31 +281,33 @@ def portfolio_risk_guard():
     price = get_price()
     pos_val = state["total_qty"] * price
     acc_val = usdt + pos_val
-    max_pos_val = acc_val * MAX_POS_RISK_PCT / 100.0
+    _, _, min_notional = symbol_filters()
+    risk_cap = acc_val * MAX_POS_RISK_PCT / 100.0
+    max_pos_val = max(risk_cap, min_notional * 1.05)  # «пол» = минимум биржи
     max_portfolio_val = acc_val * MAX_PORTFOLIO_RISK_PCT / 100.0
-    return acc_val, max_pos_val, max_portfolio_val, usdt
+    return acc_val, max_pos_val, max_portfolio_val, usdt, min_notional
 
 def maybe_enter_long(levels):
     price = levels["PRICE"]
     if state["regime"] == "trend":
         cond = (levels["EMA20"] is not None and price <= levels["EMA20"]) or \
                (levels["BB_LOW"] is not None and price <= levels["BB_LOW"])
-        k = STEP_K_ATR_TREND
-        tp_mult = TP_ATR_MULT_TREND
+        k = STEP_K_ATR_TREND; tp_mult = TP_ATR_MULT_TREND
     else:
         cond = (levels["BB_LOW"] is not None and price <= levels["BB_LOW"])
-        k = STEP_K_ATR_RANGE
-        tp_mult = TP_ATR_MULT_RANGE
+        k = STEP_K_ATR_RANGE; tp_mult = TP_ATR_MULT_RANGE
 
     if not cond or not levels["ATR"]:
         return
 
-    _, max_pos_val, _, usdt = portfolio_risk_guard()
-    if usdt < BASE_ORDER_USDT * 0.5:
+    _, max_pos_val, _, usdt, min_notional = portfolio_risk_guard()
+    if usdt < min_notional:
         return
 
     planned_total = min(BASE_ORDER_USDT * (1 + VOL_MULT*(SAFETY_ORDERS-1)), max_pos_val)
     bo = min(BASE_ORDER_USDT, planned_total)
+    bo = max(bo, min_notional)  # не ниже минимума биржи
+    bo = min(bo, usdt)          # и не больше доступного баланса
 
     qty = bo / price
     order = place_market("BUY", qty)
@@ -354,38 +339,40 @@ def maybe_dca(levels):
     price = levels["PRICE"]
     if state["next_dca_price"] is None or state["dca_step"] is None:
         return
-    if price <= state["next_dca_price"]:
-        _, _, _, usdt = portfolio_risk_guard()
-        planned_total = state["total_cost"] * VOL_MULT
-        add_usdt = min(planned_total - state["total_cost"], BASE_ORDER_USDT * (VOL_MULT ** state["dca_filled"]))
-        add_usdt = max(add_usdt, BASE_ORDER_USDT * 0.5)
-        add_usdt = min(add_usdt, usdt)
-        if add_usdt <= 5:
-            return
+    if price > state["next_dca_price"]:
+        return
 
-        qty = add_usdt / price
-        order = place_market("BUY", qty)
-        if not order:
-            return
+    _, _, _, usdt, min_notional = portfolio_risk_guard()
+    planned_total = state["total_cost"] * VOL_MULT
+    add_usdt = min(planned_total - state["total_cost"], BASE_ORDER_USDT * (VOL_MULT ** state["dca_filled"]))
+    add_usdt = max(add_usdt, min_notional)
+    add_usdt = min(add_usdt, usdt)
+    if add_usdt < min_notional * 0.99:
+        return
 
-        fee = add_usdt * COMMISSION_RATE
-        state["positions"].append({"qty": qty, "price": price, "cost": add_usdt, "fee": fee})
-        state["total_qty"]  += qty
-        state["total_cost"] += add_usdt
-        state["fees"]       += fee
-        state["avg_price"]   = state["total_cost"]/max(state["total_qty"],1e-9)
+    qty = add_usdt / price
+    order = place_market("BUY", qty)
+    if not order:
+        return
 
-        state["dca_filled"] += 1
-        state["next_dca_price"] = price - state["dca_step"]
+    fee = add_usdt * COMMISSION_RATE
+    state["positions"].append({"qty": qty, "price": price, "cost": add_usdt, "fee": fee})
+    state["total_qty"]  += qty
+    state["total_cost"] += add_usdt
+    state["fees"]       += fee
+    state["avg_price"]   = state["total_cost"]/max(state["total_qty"],1e-9)
 
-        tp_mult = TP_ATR_MULT_TREND if state["regime"] == "trend" else TP_ATR_MULT_RANGE
-        tp_abs  = max(levels["ATR"] * tp_mult, state["avg_price"] * MIN_TP_PCT/100.0)
-        state["tp_price"]  = state["avg_price"] + tp_abs
-        state["stop_price"]= state["avg_price"] - STOP_ATR_MULT * levels["ATR"]
+    state["dca_filled"] += 1
+    state["next_dca_price"] = price - state["dca_step"]
 
-        tg(f"🟢 DCA {state['dca_filled']}/{SAFETY_ORDERS} @ {price:.6f}\n"
-           f"avg={state['avg_price']:.6f}, next={state['next_dca_price']:.6f}\n"
-           f"TP={state['tp_price']:.6f}, SL={state['stop_price']:.6f}")
+    tp_mult = TP_ATR_MULT_TREND if state["regime"] == "trend" else TP_ATR_MULT_RANGE
+    tp_abs  = max(levels["ATR"] * tp_mult, state["avg_price"] * MIN_TP_PCT/100.0)
+    state["tp_price"]  = state["avg_price"] + tp_abs
+    state["stop_price"]= state["avg_price"] - STOP_ATR_MULT * levels["ATR"]
+
+    tg(f"🟢 DCA {state['dca_filled']}/{SAFETY_ORDERS} @ {price:.6f}\n"
+       f"avg={state['avg_price']:.6f}, next={state['next_dca_price']:.6f}\n"
+       f"TP={state['tp_price']:.6f}, SL={state['stop_price']:.6f}")
 
 def maybe_take_profit_and_trail(levels):
     if state["total_qty"] <= 0:
@@ -395,8 +382,7 @@ def maybe_take_profit_and_trail(levels):
         if state["trail_peak"] is None or price > state["trail_peak"]:
             state["trail_peak"] = price
         trail_drop = TRAIL_ATR_MULT * (levels["ATR"] or 0)
-        trail_line = (state["trail_peak"] or price) - trail_drop
-        if price <= trail_line:
+        if price <= (state["trail_peak"] - trail_drop):
             sell_all("TP/Trail hit", price)
 
 def maybe_stop_out(levels):
